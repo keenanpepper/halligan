@@ -30,14 +30,7 @@ def ax_version(request):
 
     # Install requested version
     subprocess.check_call(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "-r",
-            f"requirements/ax_{request.param.replace('.', '_')}.txt",
-        ]
+        [sys.executable, "-m", "pip", "install", f"ax-platform=={request.param}"]
     )
 
     yield request.param
