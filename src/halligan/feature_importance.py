@@ -41,10 +41,14 @@ def get_model_optimum_in_transformed_space(
         acq_function=acq_function,
         bounds=bounds,
         q=1,
-        num_restarts=5,
-        raw_samples=20,
+        num_restarts=20,
+        raw_samples=512,  # TODO should these be hardcoded?
         fixed_features=fixed_features,
         return_best_only=True,
+        options={
+            "batch_limit": 50,
+            "maxiter": 1000,
+        },
     )
 
     return optimal_point.squeeze(0)
@@ -117,3 +121,52 @@ def get_model_optimum_in_original_space(ax_client, fixed_features, maximize=True
         )
 
     return result_in_original_space[0].parameters
+
+
+def get_feature_importance(ax_client, neutral_value=0.0, maximize=True):
+    """
+    Calculate feature importance by measuring how much fixing each parameter
+    affects the optimal value.
+
+    Args:
+        ax_client: AxClient instance
+        neutral_value: value to fix parameters to when measuring their importance
+        maximize: bool, whether the optimization problem is maximization
+
+    Returns:
+        dict mapping parameter names to their importance scores
+    """
+    # Get unconstrained optimum as baseline
+    unconstrained_optimum = get_model_optimum_in_original_space(
+        ax_client, fixed_features={}, maximize=maximize
+    )
+    baseline_predictions = ax_client.get_model_predictions(
+        parameterizations={0: unconstrained_optimum}
+    )
+    # Extract mean value for the objective metric
+    objective_name = ax_client.objective_name
+    baseline_value = baseline_predictions[0][objective_name][0]  # Get mean, ignore SEM
+
+    # Calculate importance for each parameter
+    importance_scores = {}
+    for param_name in ax_client.experiment.search_space.parameters:
+        # Fix this parameter to neutral value
+        fixed_features = {param_name: neutral_value}
+
+        # Get constrained optimum
+        constrained_optimum = get_model_optimum_in_original_space(
+            ax_client, fixed_features=fixed_features, maximize=maximize
+        )
+        constrained_predictions = ax_client.get_model_predictions(
+            parameterizations={0: constrained_optimum}
+        )
+        constrained_value = constrained_predictions[0][objective_name][0]
+
+        # Importance is difference in optimal values: constrained should always be worse
+        # ("worse" means lower if maximizing, higher if minimizing)
+        if maximize:
+            importance_scores[param_name] = baseline_value - constrained_value
+        else:
+            importance_scores[param_name] = constrained_value - baseline_value
+
+    return importance_scores

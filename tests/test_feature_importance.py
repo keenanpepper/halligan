@@ -10,6 +10,7 @@ import torch
 
 # Local imports
 from halligan.feature_importance import (
+    get_feature_importance,
     get_model_optimum_in_original_space,
     get_model_optimum_in_transformed_space,
 )
@@ -421,3 +422,131 @@ class TestFeatureImportance:
             match="Fixed feature 0 with value 2.0 is outside bounds \[0.0, 1.0\]",
         ):
             get_model_optimum_in_original_space(mock_client, {"x1": 2.0}, maximize=True)
+
+    def test_get_feature_importance(self):
+        from ax.service.ax_client import AxClient
+        from ax.service.utils.instantiation import ObjectiveProperties
+
+        # Create a test function where x1 has more impact than x2
+        def objective(params):
+            x1 = params["x1"]
+            x2 = params["x2"]
+            return -2 * x1**2 - x2**2
+
+        # Set up Ax client
+        ax_client = AxClient()
+        ax_client.create_experiment(
+            parameters=[
+                {
+                    "name": "x1",
+                    "type": "range",
+                    "bounds": [-1.0, 1.0],
+                },
+                {
+                    "name": "x2",
+                    "type": "range",
+                    "bounds": [-1.0, 1.0],
+                },
+            ],
+            objectives={"objective": ObjectiveProperties(minimize=False)},
+        )
+
+        # Add training data
+        for _ in range(10):
+            parameters, trial_index = ax_client.get_next_trial()
+            ax_client.complete_trial(
+                trial_index=trial_index, raw_data=objective(parameters)
+            )
+
+        # Calculate feature importance
+        importance_scores = get_feature_importance(
+            ax_client, neutral_value=0.0, maximize=True
+        )
+
+        # Basic checks
+        assert set(importance_scores.keys()) == {"x1", "x2"}
+        assert all(isinstance(score, float) for score in importance_scores.values())
+        assert all(score >= 0 for score in importance_scores.values())
+        # x1 should have higher importance due to larger coefficient
+        assert importance_scores["x1"] > importance_scores["x2"]
+
+    def test_get_feature_importance_minimize(self):
+        from ax.service.ax_client import AxClient
+        from ax.service.utils.instantiation import ObjectiveProperties
+
+        # Create a simple quadratic objective
+        def objective(params):
+            x1 = params["x1"]
+            return x1**2  # Simple quadratic function
+
+        # Set up Ax client
+        ax_client = AxClient()
+        ax_client.create_experiment(
+            parameters=[
+                {
+                    "name": "x1",
+                    "type": "range",
+                    "bounds": [-1.0, 1.0],
+                },
+            ],
+            objectives={"objective": ObjectiveProperties(minimize=True)},
+        )
+
+        # Add training data
+        for _ in range(10):
+            parameters, trial_index = ax_client.get_next_trial()
+            ax_client.complete_trial(
+                trial_index=trial_index, raw_data=objective(parameters)
+            )
+
+        # Test with minimization
+        importance_scores = get_feature_importance(
+            ax_client, neutral_value=0.0, maximize=False
+        )
+
+        assert set(importance_scores.keys()) == {"x1"}
+        assert isinstance(importance_scores["x1"], float)
+        assert importance_scores["x1"] >= 0
+
+    def test_get_feature_importance_different_neutral(self):
+        from ax.service.ax_client import AxClient
+        from ax.service.utils.instantiation import ObjectiveProperties
+
+        # Create a non-symmetric objective function
+        def objective(params):
+            x1 = params["x1"]
+            return 2 * x1**2 + x1  # Non-symmetric function
+
+        # Set up Ax client
+        ax_client = AxClient()
+        ax_client.create_experiment(
+            parameters=[
+                {
+                    "name": "x1",
+                    "type": "range",
+                    "bounds": [-1.0, 1.0],
+                },
+            ],
+            objectives={"objective": ObjectiveProperties(minimize=False)},
+        )
+
+        # Add training data
+        for _ in range(10):
+            parameters, trial_index = ax_client.get_next_trial()
+            ax_client.complete_trial(
+                trial_index=trial_index, raw_data=objective(parameters)
+            )
+
+        # Test with different neutral values
+        importance_scores_0 = get_feature_importance(
+            ax_client, neutral_value=0.0, maximize=True
+        )
+        importance_scores_5 = get_feature_importance(
+            ax_client, neutral_value=0.5, maximize=True
+        )
+
+        # Different neutral values should give different importance scores
+        # due to the non-symmetric nature of the objective function
+        assert importance_scores_0["x1"] != importance_scores_5["x1"]
+        assert importance_scores_0["x1"] > 0
+        assert importance_scores_5["x1"] > 0
