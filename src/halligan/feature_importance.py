@@ -68,6 +68,10 @@ def get_model_optimum_in_original_space(ax_client, fixed_features, maximize=True
     Returns:
         dict of {feature_name: value} for the optimal point
     """
+    # Fit the model
+    # (This is needed because after N trials are completed the model is only fit to N-1 trials... it's only fit when the *next* trial is generated)
+    ax_client.fit_model()
+
     # Transform search space and extract bounds
     model_bridge = ax_client.generation_strategy.model
     search_space = ax_client.experiment.search_space.clone()
